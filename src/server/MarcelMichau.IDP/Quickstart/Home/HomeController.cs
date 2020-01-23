@@ -18,13 +18,11 @@ namespace MarcelMichau.IDP.Quickstart.Home
     {
         private readonly IIdentityServerInteractionService _interaction;
         private readonly IWebHostEnvironment _environment;
-        private readonly ILogger _logger;
 
-        public HomeController(IIdentityServerInteractionService interaction, IWebHostEnvironment environment, ILogger<HomeController> logger)
+        public HomeController(IIdentityServerInteractionService interaction, IWebHostEnvironment environment)
         {
             _interaction = interaction;
             _environment = environment;
-            _logger = logger;
         }
 
         public IActionResult Index()
@@ -39,17 +37,16 @@ namespace MarcelMichau.IDP.Quickstart.Home
         {
             var vm = new ErrorViewModel();
 
-            // retrieve error details from identityserver
+            // retrieve error details from Identity Server
             var message = await _interaction.GetErrorContextAsync(errorId);
-            if (message != null)
-            {
-                vm.Error = message;
+            if (message == null) return View("Error", vm);
 
-                if (!_environment.IsDevelopment())
-                {
-                    // only show in development
-                    message.ErrorDescription = null;
-                }
+            vm.Error = message;
+
+            if (!_environment.IsDevelopment())
+            {
+                // only show in development
+                message.ErrorDescription = null;
             }
 
             return View("Error", vm);

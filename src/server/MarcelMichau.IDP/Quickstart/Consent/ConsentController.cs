@@ -52,12 +52,7 @@ namespace MarcelMichau.IDP.Quickstart.Consent
         public async Task<IActionResult> Index(string returnUrl)
         {
             var vm = await BuildViewModelAsync(returnUrl);
-            if (vm != null)
-            {
-                return View("Index", vm);
-            }
-
-            return View("Error");
+            return vm != null ? View("Index", vm) : View("Error");
         }
 
         /// <summary>
@@ -86,12 +81,7 @@ namespace MarcelMichau.IDP.Quickstart.Consent
                 ModelState.AddModelError(string.Empty, result.ValidationError);
             }
 
-            if (result.ShowView)
-            {
-                return View("Index", result.ViewModel);
-            }
-
-            return View("Error");
+            return result.ShowView ? View("Index", result.ViewModel) : View("Error");
         }
 
         /*****************************************/
@@ -107,19 +97,18 @@ namespace MarcelMichau.IDP.Quickstart.Consent
 
             ConsentResponse grantedConsent = null;
 
-            // user clicked 'no' - send back the standard 'access_denied' response
-            if (model?.Button == "no")
+            switch (model.Button)
             {
-                grantedConsent = ConsentResponse.Denied;
+                // user clicked 'no' - send back the standard 'access_denied' response
+                // user clicked 'yes' - validate the data
+                case "no":
+                    grantedConsent = ConsentResponse.Denied;
 
-                // emit event
-                await _events.RaiseAsync(new ConsentDeniedEvent(User.GetSubjectId(), request.ClientId, request.ScopesRequested));
-            }
-            // user clicked 'yes' - validate the data
-            else if (model?.Button == "yes")
-            {
+                    // emit event
+                    await _events.RaiseAsync(new ConsentDeniedEvent(User.GetSubjectId(), request.ClientId, request.ScopesRequested));
+                    break;
                 // if the user consented to some scope, build the response model
-                if (model.ScopesConsented != null && model.ScopesConsented.Any())
+                case "yes" when model.ScopesConsented != null && model.ScopesConsented.Any():
                 {
                     var scopes = model.ScopesConsented;
                     if (ConsentOptions.EnableOfflineAccess == false)
@@ -135,20 +124,19 @@ namespace MarcelMichau.IDP.Quickstart.Consent
 
                     // emit event
                     await _events.RaiseAsync(new ConsentGrantedEvent(User.GetSubjectId(), request.ClientId, request.ScopesRequested, grantedConsent.ScopesConsented, grantedConsent.RememberConsent));
+                    break;
                 }
-                else
-                {
+                case "yes":
                     result.ValidationError = ConsentOptions.MustChooseOneErrorMessage;
-                }
-            }
-            else
-            {
-                result.ValidationError = ConsentOptions.InvalidSelectionErrorMessage;
+                    break;
+                default:
+                    result.ValidationError = ConsentOptions.InvalidSelectionErrorMessage;
+                    break;
             }
 
             if (grantedConsent != null)
             {
-                // communicate outcome of consent back to identityserver
+                // communicate outcome of consent back to IdentityServer
                 await _interaction.GrantConsentAsync(request, grantedConsent);
 
                 // indicate that's it ok to redirect back to authorization endpoint
@@ -175,7 +163,7 @@ namespace MarcelMichau.IDP.Quickstart.Consent
                     var resources = await _resourceStore.FindEnabledResourcesByScopeAsync(request.ScopesRequested);
                     if (resources != null && (resources.IdentityResources.Any() || resources.ApiResources.Any()))
                     {
-                        return CreateConsentViewModel(model, returnUrl, request, client, resources);
+                        return CreateConsentViewModel(model, returnUrl, client, resources);
                     }
                     else
                     {
@@ -197,7 +185,6 @@ namespace MarcelMichau.IDP.Quickstart.Consent
 
         private ConsentViewModel CreateConsentViewModel(
             ConsentInputModel model, string returnUrl,
-            AuthorizationRequest request,
             Client client, Resources resources)
         {
             var vm = new ConsentViewModel
@@ -217,7 +204,8 @@ namespace MarcelMichau.IDP.Quickstart.Consent
             vm.ResourceScopes = resources.ApiResources.SelectMany(x => x.Scopes).Select(x => CreateScopeViewModel(x, vm.ScopesConsented.Contains(x.Name) || model == null)).ToArray();
             if (ConsentOptions.EnableOfflineAccess && resources.OfflineAccess)
             {
-                vm.ResourceScopes = vm.ResourceScopes.Union(new ScopeViewModel[] {
+                vm.ResourceScopes = vm.ResourceScopes.Union(new[] 
+                {
                     GetOfflineAccessScope(vm.ScopesConsented.Contains(IdentityServer4.IdentityServerConstants.StandardScopes.OfflineAccess) || model == null)
                 });
             }

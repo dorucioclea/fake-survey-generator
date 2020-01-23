@@ -58,9 +58,7 @@ namespace MarcelMichau.IDP.Quickstart.Device
         public async Task<IActionResult> UserCodeCapture(string userCode)
         {
             var vm = await BuildViewModelAsync(userCode);
-            if (vm == null) return View("Error");
-
-            return View("UserCodeConfirmation", vm);
+            return vm == null ? View("Error") : View("UserCodeConfirmation", vm);
         }
 
         [HttpPost]
@@ -70,9 +68,7 @@ namespace MarcelMichau.IDP.Quickstart.Device
             if (model == null) throw new ArgumentNullException(nameof(model));
 
             var result = await ProcessConsent(model);
-            if (result.HasValidationError) return View("Error");
-
-            return View("Success");
+            return View(result.HasValidationError ? "Error" : "Success");
         }
 
         private async Task<ProcessConsentResult> ProcessConsent(DeviceAuthorizationInputModel model)
@@ -84,19 +80,18 @@ namespace MarcelMichau.IDP.Quickstart.Device
 
             ConsentResponse grantedConsent = null;
 
-            // user clicked 'no' - send back the standard 'access_denied' response
-            if (model.Button == "no")
+            switch (model.Button)
             {
-                grantedConsent = ConsentResponse.Denied;
+                // user clicked 'no' - send back the standard 'access_denied' response
+                // user clicked 'yes' - validate the data
+                case "no":
+                    grantedConsent = ConsentResponse.Denied;
 
-                // emit event
-                await _events.RaiseAsync(new ConsentDeniedEvent(User.GetSubjectId(), request.ClientId, request.ScopesRequested));
-            }
-            // user clicked 'yes' - validate the data
-            else if (model.Button == "yes")
-            {
+                    // emit event
+                    await _events.RaiseAsync(new ConsentDeniedEvent(User.GetSubjectId(), request.ClientId, request.ScopesRequested));
+                    break;
                 // if the user consented to some scope, build the response model
-                if (model.ScopesConsented != null && model.ScopesConsented.Any())
+                case "yes" when model.ScopesConsented != null && model.ScopesConsented.Any():
                 {
                     var scopes = model.ScopesConsented;
                     if (ConsentOptions.EnableOfflineAccess == false)
@@ -112,20 +107,19 @@ namespace MarcelMichau.IDP.Quickstart.Device
 
                     // emit event
                     await _events.RaiseAsync(new ConsentGrantedEvent(User.GetSubjectId(), request.ClientId, request.ScopesRequested, grantedConsent.ScopesConsented, grantedConsent.RememberConsent));
+                    break;
                 }
-                else
-                {
+                case "yes":
                     result.ValidationError = ConsentOptions.MustChooseOneErrorMessage;
-                }
-            }
-            else
-            {
-                result.ValidationError = ConsentOptions.InvalidSelectionErrorMessage;
+                    break;
+                default:
+                    result.ValidationError = ConsentOptions.InvalidSelectionErrorMessage;
+                    break;
             }
 
             if (grantedConsent != null)
             {
-                // communicate outcome of consent back to identityserver
+                // communicate outcome of consent back to Identity Server
                 await _interaction.HandleRequestAsync(model.UserCode, grantedConsent);
 
                 // indicate that's it ok to redirect back to authorization endpoint
@@ -144,25 +138,21 @@ namespace MarcelMichau.IDP.Quickstart.Device
         private async Task<DeviceAuthorizationViewModel> BuildViewModelAsync(string userCode, DeviceAuthorizationInputModel model = null)
         {
             var request = await _interaction.GetAuthorizationContextAsync(userCode);
-            if (request != null)
+            if (request == null) return null;
+            var client = await _clientStore.FindEnabledClientByIdAsync(request.ClientId);
+            if (client != null)
             {
-                var client = await _clientStore.FindEnabledClientByIdAsync(request.ClientId);
-                if (client != null)
+                var resources = await _resourceStore.FindEnabledResourcesByScopeAsync(request.ScopesRequested);
+                if (resources != null && (resources.IdentityResources.Any() || resources.ApiResources.Any()))
                 {
-                    var resources = await _resourceStore.FindEnabledResourcesByScopeAsync(request.ScopesRequested);
-                    if (resources != null && (resources.IdentityResources.Any() || resources.ApiResources.Any()))
-                    {
-                        return CreateConsentViewModel(userCode, model, client, resources);
-                    }
-                    else
-                    {
-                        _logger.LogError("No scopes matching: {0}", request.ScopesRequested.Aggregate((x, y) => x + ", " + y));
-                    }
+                    return CreateConsentViewModel(userCode, model, client, resources);
                 }
-                else
-                {
-                    _logger.LogError("Invalid client id: {0}", request.ClientId);
-                }
+
+                _logger.LogError("No scopes matching: {0}", request.ScopesRequested.Aggregate((x, y) => x + ", " + y));
+            }
+            else
+            {
+                _logger.LogError("Invalid client id: {0}", request.ClientId);
             }
 
             return null;
@@ -196,7 +186,7 @@ namespace MarcelMichau.IDP.Quickstart.Device
             return vm;
         }
 
-        private ScopeViewModel CreateScopeViewModel(IdentityResource identity, bool check)
+        private static ScopeViewModel CreateScopeViewModel(IdentityResource identity, bool check)
         {
             return new ScopeViewModel
             {

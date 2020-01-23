@@ -111,17 +111,17 @@ namespace MarcelMichau.IDP.Quickstart.Account
                 user = await AutoProvisionUserAsync(provider, providerUserId, claims);
             }
 
-            // this allows us to collect any additonal claims or properties
-            // for the specific prtotocols used and store them in the local auth cookie.
+            // this allows us to collect any additional claims or properties
+            // for the specific protocols used and store them in the local auth cookie.
             // this is typically used to store data needed for signout from those protocols.
             var additionalLocalClaims = new List<Claim>();
             var localSignInProps = new AuthenticationProperties();
             ProcessLoginCallbackForOidc(result, additionalLocalClaims, localSignInProps);
-            ProcessLoginCallbackForWsFed(result, additionalLocalClaims, localSignInProps);
-            ProcessLoginCallbackForSaml2p(result, additionalLocalClaims, localSignInProps);
+            //            ProcessLoginCallbackForWsFed(result, additionalLocalClaims, localSignInProps);
+            //            ProcessLoginCallbackForSaml2p(result, additionalLocalClaims, localSignInProps);
 
             // issue authentication cookie for user
-            // we must issue the cookie maually, and can't use the SignInManager because
+            // we must issue the cookie manually, and can't use the SignInManager because
             // it doesn't expose an API to issue additional claims from the login workflow
             var principal = await _signInManager.CreateUserPrincipalAsync(user);
             additionalLocalClaims.AddRange(principal.Claims);
@@ -138,14 +138,12 @@ namespace MarcelMichau.IDP.Quickstart.Account
             var context = await _interaction.GetAuthorizationContextAsync(returnUrl);
             await _events.RaiseAsync(new UserLoginSuccessEvent(provider, providerUserId, user.Id, name, true, context?.ClientId));
 
-            if (context != null)
+            if (context == null) return Redirect(returnUrl);
+            if (await _clientStore.IsPkceClientAsync(context.ClientId))
             {
-                if (await _clientStore.IsPkceClientAsync(context.ClientId))
-                {
-                    // if the client is PKCE then we assume it's native, so this change in how to
-                    // return the response is for better UX for the end user.
-                    return View("Redirect", new RedirectViewModel { RedirectUrl = returnUrl });
-                }
+                // if the client is PKCE then we assume it's native, so this change in how to
+                // return the response is for better UX for the end user.
+                return View("Redirect", new RedirectViewModel { RedirectUrl = returnUrl });
             }
 
             return Redirect(returnUrl);
@@ -177,10 +175,15 @@ namespace MarcelMichau.IDP.Quickstart.Account
                 // add the groups as claims -- be careful if the number of groups is too large
                 if (AccountOptions.IncludeWindowsGroups)
                 {
-                    var wi = wp.Identity as WindowsIdentity;
-                    var groups = wi.Groups.Translate(typeof(NTAccount));
-                    var roles = groups.Select(x => new Claim(JwtClaimTypes.Role, x.Value));
-                    id.AddClaims(roles);
+                    if (wp.Identity is WindowsIdentity wi)
+                    {
+                        if (wi.Groups != null)
+                        {
+                            var groups = wi.Groups.Translate(typeof(NTAccount));
+                            var roles = (groups ?? throw new InvalidOperationException()).Select(x => new Claim(JwtClaimTypes.Role, x.Value));
+                            id.AddClaims(roles);
+                        }
+                    }
                 }
 
                 await HttpContext.SignInAsync(
@@ -189,13 +192,11 @@ namespace MarcelMichau.IDP.Quickstart.Account
                     props);
                 return Redirect(props.RedirectUri);
             }
-            else
-            {
-                // trigger windows auth
-                // since windows auth don't support the redirect uri,
-                // this URL is re-triggered when we call challenge
-                return Challenge(AccountOptions.WindowsAuthenticationSchemeName);
-            }
+
+            // trigger windows auth
+            // since windows auth don't support the redirect uri,
+            // this URL is re-triggered when we call challenge
+            return Challenge(AccountOptions.WindowsAuthenticationSchemeName);
         }
 
         private async Task<(ApplicationUser user, string provider, string providerUserId, IEnumerable<Claim> claims)>
@@ -229,18 +230,19 @@ namespace MarcelMichau.IDP.Quickstart.Account
             var filtered = new List<Claim>();
 
             // user's display name
-            var name = claims.FirstOrDefault(x => x.Type == JwtClaimTypes.Name)?.Value ??
-                claims.FirstOrDefault(x => x.Type == ClaimTypes.Name)?.Value;
+            var listClaims = claims.ToList();
+            var name = listClaims.FirstOrDefault(x => x.Type == JwtClaimTypes.Name)?.Value ??
+                listClaims.FirstOrDefault(x => x.Type == ClaimTypes.Name)?.Value;
             if (name != null)
             {
                 filtered.Add(new Claim(JwtClaimTypes.Name, name));
             }
             else
             {
-                var first = claims.FirstOrDefault(x => x.Type == JwtClaimTypes.GivenName)?.Value ??
-                    claims.FirstOrDefault(x => x.Type == ClaimTypes.GivenName)?.Value;
-                var last = claims.FirstOrDefault(x => x.Type == JwtClaimTypes.FamilyName)?.Value ??
-                    claims.FirstOrDefault(x => x.Type == ClaimTypes.Surname)?.Value;
+                var first = listClaims.FirstOrDefault(x => x.Type == JwtClaimTypes.GivenName)?.Value ??
+                    listClaims.FirstOrDefault(x => x.Type == ClaimTypes.GivenName)?.Value;
+                var last = listClaims.FirstOrDefault(x => x.Type == JwtClaimTypes.FamilyName)?.Value ??
+                    listClaims.FirstOrDefault(x => x.Type == ClaimTypes.Surname)?.Value;
                 if (first != null && last != null)
                 {
                     filtered.Add(new Claim(JwtClaimTypes.Name, first + " " + last));
@@ -256,8 +258,8 @@ namespace MarcelMichau.IDP.Quickstart.Account
             }
 
             // email
-            var email = claims.FirstOrDefault(x => x.Type == JwtClaimTypes.Email)?.Value ??
-               claims.FirstOrDefault(x => x.Type == ClaimTypes.Email)?.Value;
+            var email = listClaims.FirstOrDefault(x => x.Type == JwtClaimTypes.Email)?.Value ??
+               listClaims.FirstOrDefault(x => x.Type == ClaimTypes.Email)?.Value;
             if (email != null)
             {
                 filtered.Add(new Claim(JwtClaimTypes.Email, email));
@@ -283,7 +285,7 @@ namespace MarcelMichau.IDP.Quickstart.Account
         }
 
 
-        private void ProcessLoginCallbackForOidc(AuthenticateResult externalResult, List<Claim> localClaims, AuthenticationProperties localSignInProps)
+        private static void ProcessLoginCallbackForOidc(AuthenticateResult externalResult, ICollection<Claim> localClaims, AuthenticationProperties localSignInProps)
         {
             // if the external system sent a session id claim, copy it over
             // so we can use it for single sign-out
@@ -294,19 +296,20 @@ namespace MarcelMichau.IDP.Quickstart.Account
             }
 
             // if the external provider issued an id_token, we'll keep it for signout
-            var id_token = externalResult.Properties.GetTokenValue("id_token");
-            if (id_token != null)
+            var idToken = externalResult.Properties.GetTokenValue("id_token");
+            if (idToken != null)
             {
-                localSignInProps.StoreTokens(new[] { new AuthenticationToken { Name = "id_token", Value = id_token } });
+                localSignInProps.StoreTokens(new[] { new AuthenticationToken { Name = "id_token", Value = idToken } });
             }
         }
 
-        private void ProcessLoginCallbackForWsFed(AuthenticateResult externalResult, List<Claim> localClaims, AuthenticationProperties localSignInProps)
-        {
-        }
-
-        private void ProcessLoginCallbackForSaml2p(AuthenticateResult externalResult, List<Claim> localClaims, AuthenticationProperties localSignInProps)
-        {
-        }
+        //        // ReSharper disable once UnusedParameter.Local
+        //        private static void ProcessLoginCallbackForWsFed(AuthenticateResult externalResult, List<Claim> localClaims, AuthenticationProperties localSignInProps)
+        //        {
+        //        }
+        //
+        //        private void ProcessLoginCallbackForSaml2p(AuthenticateResult externalResult, List<Claim> localClaims, AuthenticationProperties localSignInProps)
+        //        {
+        //        }
     }
 }

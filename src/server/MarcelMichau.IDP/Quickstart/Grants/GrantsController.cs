@@ -67,24 +67,23 @@ namespace MarcelMichau.IDP.Quickstart.Grants
             foreach(var grant in grants)
             {
                 var client = await _clients.FindClientByIdAsync(grant.ClientId);
-                if (client != null)
+                if (client == null) continue;
+
+                var resources = await _resources.FindResourcesByScopeAsync(grant.Scopes);
+
+                var item = new GrantViewModel()
                 {
-                    var resources = await _resources.FindResourcesByScopeAsync(grant.Scopes);
+                    ClientId = client.ClientId,
+                    ClientName = client.ClientName ?? client.ClientId,
+                    ClientLogoUrl = client.LogoUri,
+                    ClientUrl = client.ClientUri,
+                    Created = grant.CreationTime,
+                    Expires = grant.Expiration,
+                    IdentityGrantNames = resources.IdentityResources.Select(x => x.DisplayName ?? x.Name).ToArray(),
+                    ApiGrantNames = resources.ApiResources.Select(x => x.DisplayName ?? x.Name).ToArray()
+                };
 
-                    var item = new GrantViewModel()
-                    {
-                        ClientId = client.ClientId,
-                        ClientName = client.ClientName ?? client.ClientId,
-                        ClientLogoUrl = client.LogoUri,
-                        ClientUrl = client.ClientUri,
-                        Created = grant.CreationTime,
-                        Expires = grant.Expiration,
-                        IdentityGrantNames = resources.IdentityResources.Select(x => x.DisplayName ?? x.Name).ToArray(),
-                        ApiGrantNames = resources.ApiResources.Select(x => x.DisplayName ?? x.Name).ToArray()
-                    };
-
-                    list.Add(item);
-                }
+                list.Add(item);
             }
 
             return new GrantsViewModel

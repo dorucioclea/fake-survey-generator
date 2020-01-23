@@ -168,7 +168,7 @@ namespace MarcelMichau.IDP.Quickstart.Account
         }
 
         /// <summary>
-        /// Handle logout page postback
+        /// Handle logout page post-back
         /// </summary>
         [HttpPost]
         [ValidateAntiForgeryToken]
@@ -223,7 +223,7 @@ namespace MarcelMichau.IDP.Quickstart.Account
                 {
                     EnableLocalLogin = local,
                     ReturnUrl = returnUrl,
-                    Username = context?.LoginHint,
+                    Username = context.LoginHint,
                 };
 
                 if (!local)
@@ -305,38 +305,32 @@ namespace MarcelMichau.IDP.Quickstart.Account
 
         private async Task<LoggedOutViewModel> BuildLoggedOutViewModelAsync(string logoutId)
         {
-            // get context information (client name, post logout redirect URI and iframe for federated signout)
+            // get context information (client name, post logout redirect URI and iframe for federated sign out)
             var logout = await _interaction.GetLogoutContextAsync(logoutId);
 
             var vm = new LoggedOutViewModel
             {
                 AutomaticRedirectAfterSignOut = AccountOptions.AutomaticRedirectAfterSignOut,
                 PostLogoutRedirectUri = logout?.PostLogoutRedirectUri,
-                ClientName = string.IsNullOrEmpty(logout?.ClientName) ? logout?.ClientId : logout?.ClientName,
+                ClientName = string.IsNullOrEmpty(logout?.ClientName) ? logout?.ClientId : logout.ClientName,
                 SignOutIframeUrl = logout?.SignOutIFrameUrl,
                 LogoutId = logoutId
             };
 
-            if (User?.Identity.IsAuthenticated == true)
+            if (User?.Identity.IsAuthenticated != true) return vm;
+            var idp = User.FindFirst(JwtClaimTypes.IdentityProvider)?.Value;
+            if (idp == null || idp == IdentityServer4.IdentityServerConstants.LocalIdentityProvider) return vm;
+            var providerSupportsSignOut = await HttpContext.GetSchemeSupportsSignOutAsync(idp);
+            if (!providerSupportsSignOut) return vm;
+            if (vm.LogoutId == null)
             {
-                var idp = User.FindFirst(JwtClaimTypes.IdentityProvider)?.Value;
-                if (idp != null && idp != IdentityServer4.IdentityServerConstants.LocalIdentityProvider)
-                {
-                    var providerSupportsSignout = await HttpContext.GetSchemeSupportsSignOutAsync(idp);
-                    if (providerSupportsSignout)
-                    {
-                        if (vm.LogoutId == null)
-                        {
-                            // if there's no current logout context, we need to create one
-                            // this captures necessary info from the current logged in user
-                            // before we signout and redirect away to the external IdP for signout
-                            vm.LogoutId = await _interaction.CreateLogoutContextAsync();
-                        }
-
-                        vm.ExternalAuthenticationScheme = idp;
-                    }
-                }
+                // if there's no current logout context, we need to create one
+                // this captures necessary info from the current logged in user
+                // before we sign out and redirect away to the external IdP for sign out
+                vm.LogoutId = await _interaction.CreateLogoutContextAsync();
             }
+
+            vm.ExternalAuthenticationScheme = idp;
 
             return vm;
         }
